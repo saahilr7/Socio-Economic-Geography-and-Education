@@ -1,0 +1,454 @@
+---
+title: "Group Project"
+author: "Saahil Rasheed"
+date: "2/1/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r, message=FALSE}
+library(car)
+library(rio)
+library(stargazer)
+library(ggplot2)
+library(dplyr)
+library(Hmisc)
+library(psych)
+library(fastDummies)
+library(plm)
+library(nlme)
+library(lmtest)
+library(sandwich)
+library(robustbase)
+```
+
+###Socio Economic Geography and Education
+## Pre-Processing
+
+```{r, message=FALSE}
+rm(list =ls())
+setwd("C:/Users/saahi/Dropbox/SDM/Socio-Economic-Geography-and-Education")
+
+d <- import("2013-2017_School_Math_Results_-_Genderclean.xlsx")
+
+# dummy variables for grade
+# I created a dummy for each grade but should omit 1 dummy var from model as the base case
+ddum <- dummy_cols(d,select_columns="grade")
+
+# dummy variables for district
+# I created a dummy for each borough but should omit 1 dummy var from model as the base case
+ddum$bronx <-0
+ddum$brook <- 0
+ddum$man <- 0
+ddum$queen <- 0
+ddum$staten <- 0
+
+# Boroughs are made up of the following districts 1-6 are Manhattan, 7-12 are Bronx, 13-23 & 32 are Brooklyn, 2
+# 4-30 are Queens, and 31 is Statten Island
+
+# populate borough dummy columns values
+for (i in 1:7631)
+{
+  if (ddum$district[i] < 7)
+  {
+    ddum$man[i] = 1
+  } else if (ddum$district[i] > 6 & ddum$district[i] < 12 )
+  {
+    ddum$bronx[i] = 1
+  }else if (ddum$district[i] > 12 & ddum$district[i] < 24)
+  {
+    ddum$brook[i] = 1
+  }else if (ddum$district[i] > 23 & ddum$district[i] < 31)
+  {
+    ddum$queen[i] = 1
+  }else if (ddum$district[i] == 31)
+  {
+    ddum$staten[i] = 1
+  }else if (ddum$district[i] == 32)
+  {
+    ddum$brook[i] = 1
+  }
+}
+
+# remove rows that just had a 2013 or a 2017 score. the 0 value for the missing score was causing severe outlier
+# issues and wildly throwing off the normality of the residuals with the models. Still seems to be some normality issues
+# but maybe can remove a view outliers still with outlierTest() and then see if that improves things.
+dclean <-filter(ddum,scalescore17 != 0)
+dclean <-filter(dclean, scalescore13 !=0)
+```
+
+## Models
+
+```{r}
+# model for score change b/w years and boroughs - staten island as base case
+m1 <- lm(scalescore17~scalescore13 + bronx + brook + man + queen, data=dclean)
+summary(m1)
+
+# model for score change difference between boys and girls
+m2 <- lm(scalescore17~scalescore13 + female, data=dclean)
+summary(m2)
+
+# model for score change difference between grades - 3rd grade is base case
+m3 <- lm(scalescore17~scalescore13 + grade_4 + grade_5 + grade_6 + grade_7 + grade_8, data=dclean)
+summary(m3)
+plot(m3)
+# model for grades and gender - 3rd grade is base case
+m4 <- lm(scalescore17~scalescore13 + female + grade_4 + grade_5 + grade_6 + grade_7 + grade_8, data=dclean)
+summary(m4)
+
+# model for grades and borough and female
+m5 <- lm(scalescore17~scalescore13 + female + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 +
+           grade_8, data=dclean)
+summary(m5)
+plot(m5)
+
+m5.1 <- lm(scalescore17~poly(scalescore13,3) + female + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 +
+           grade_8, data=dclean)
+summary(m5.1)
+resettest(m5.1)
+plot(m5.1)
+
+```
+
+
+```{r}
+
+
+m11 <- lm(scalescore17~log(scalescore13) + bronx + brook + man + queen, data=dclean)
+summary(m11)
+
+m12 <- lm(scalescore17~scalescore13 + bronx + brook + man + queen + I(scalescore13*bronx) , data = dclean)
+summary(m12)
+
+m13 <- lm(scalescore17~scalescore13 + bronx + brook + man + queen + I(scalescore13*bronx) + I(scalescore13^2) , data=dclean)
+summary(m13)
+
+m14 <- lm(scalescore17~scalescore13 + bronx + brook + man + queen + I(scalescore13*bronx) + I(scalescore13^2) + female, data=dclean)
+summary(m14)
+
+m15 <- lm(scalescore17~scalescore13 + bronx + brook + man + queen + I(scalescore13*bronx) + I(scalescore13^2) + female + grade_4 + grade_5 + grade_6 + grade_7 + grade_8, data=dclean)
+summary(m15)
+
+m16 <- lm(scalescore17~scalescore13 + bronx + brook + man + queen + female + grade_4 + grade_5 + grade_6 + grade_7 + grade_8 + I(grade_5*scalescore13-297.57) + I((scalescore13-297.57)*bronx) + I(scalescore13^2), data=dclean)
+summary(m16)
+
+plot(m16)
+plot(m16$fitted.values,m16$residuals)
+```
+INTERPRETATION:
+
+1.	M1: m1 is the original model.
+2.	M11: level-log model which resulted in a decreased Adj R-sq value. Hence, I decided to go ahead without level-log or log-log transforms.
+3.	M12: Made an interaction between scalescore13 and Bronx and this turned out to be significant. Additionally, the Bronx dummy variable is also significant in this model. (best model imo)
+4.	M13: Took a transform of scalescore13 to the power of 2 in addition to the previous best model. Transform turned out to be significant. (BEST)
+Decide to use transform of scalescore13 to the power of 2 in the upcoming models for different scenarios.
+
+```{r}
+d2 <- dclean[!is.na(dclean$scalescore13), ]
+mean(d2$scalescore13)
+
+stargazer(m13, m15, m16, type="text", title="Results", align=TRUE)
+```
+
+```{r}
+# model for score change difference between boys and girls
+m2 <- lm(scalescore17~scalescore13 + female, data=dclean)
+summary(m2)
+
+m21 <- lm(scalescore17~ scalescore13 + female + I(scalescore13^2) , data = dclean)
+summary(m21)
+
+m22<- lm(scalescore17~ scalescore13 + female + I(scalescore13^2) + I(scalescore13*female) , data = dclean)
+summary(m22)
+```
+INTERPRETATION:
+
+1. m2 is the original model.
+2. Included transform of scalescore13^2. Improved R-sq. (BEST)
+3. Included interaction between female and scalescore13. Interaction insignificant.
+
+```{r}
+# model for score change difference between grades - 3rd grade is base case
+m3 <- lm(scalescore17~scalescore13 + grade_4 + grade_5 + grade_6 + grade_7 + grade_8, data=dclean)
+summary(m3)
+
+m31<- lm(scalescore17~scalescore13 + grade_4 + grade_5 + grade_6 + grade_7 + grade_8 + I(grade_5*scalescore13),data = dclean)
+summary(m31)
+
+m32<-lm(scalescore17~scalescore13 + grade_4 + grade_5 + grade_6 + grade_7 + grade_8 + I(grade_5*scalescore13) + I(grade_7*scalescore13) , data = dclean)
+summary(m32)
+
+m33<- lm(scalescore17~scalescore13 + grade_4 + grade_5 + grade_6 + grade_7 + grade_8 + I(scalescore13^2) , data = dclean)
+summary(m33)
+```
+INTERPRETATION:
+
+1. m3 is the original model.
+2. m31: Included interaction between grade 5 and scalescore13.
+3. m32: Included interaction between grade 7 and scalescore13. Insignificant.
+4. m33: Only included transform of scalescore13 to m1. Improved adj-Rsq value. (BEST)
+
+These interactions don't cause a big improvement in the adj R-sq value.
+
+```{r}
+# model for grades and gender - 3rd grade is base case
+m4 <- lm(scalescore17~scalescore13 + female + grade_4 + grade_5 + grade_6 + grade_7 + grade_8, data=dclean)
+summary(m4)
+
+
+m41<- lm(scalescore17~scalescore13 + female + grade_4 + grade_5 + grade_6 + grade_7 + grade_8 + I(female*grade_5),data=dclean)
+summary(m41)
+
+m42<- lm(scalescore17~scalescore13 + female + grade_4 + grade_5 + grade_6 + grade_7 + grade_8 + I(grade_5*scalescore13) + I(scalescore13^2) , data=dclean)
+summary(m42)
+```
+INTERPRETATION:
+
+1. m4 is the original model.
+2. m41: Included interaction between female and grade_5. Not a very big improvement in the adj R-sq.
+3. m42: Added transform of scalescore13 to the power of 2 to model m41. Best model yet and all covariates turn out to be significant. (BEST)
+
+```{r}
+# model for grades and borough
+m5 <- lm(scalescore17~scalescore13 + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 +
+           grade_8, data=dclean)
+summary(m5)
+
+
+m51<- lm(scalescore17~scalescore13 + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 +
+           grade_8 + I(scalescore13^2) + I(scalescore13^3) + I(grade_8*bronx) , data=dclean)
+summary(m51)
+
+m52<- lm(scalescore17~scalescore13 + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 +
+           grade_8 + I(scalescore13^2) + I(grade_7*scalescore13) , data = dclean)
+summary(m52)
+
+m53<- lm(scalescore17~scalescore13 + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 +
+           grade_8 + I(scalescore13^2) + I(grade_8*bronx) , data=dclean)
+summary(m53)
+
+```
+INTERPRETATION:
+
+1. m5 is the original model. 
+2. m51: Took two transforms of scalescore13 to the power of 2 and 3 each. Added interaction between grade 8 and bronx boroughs. Best adj R-sq value.
+3. m52: Took transform of scalescore13 to the power of 2. Added interaction between grade7 and scalescore13 and this interaction turned out to be insignificant. (BEST)
+I tried out a number of these interactions taking grade with different boroughs but they turned out to be insignificant.
+4. m53: Took transform of scalescore13 to the power of 2. Added interaction between grade 8 and bronx (taking the idea from model m51). Second best adj r-sq value.
+
+
+
+#I chose the best models from the analysis done above and tested formally for normality. These models seem to pass the test for Normality of residuals.
+```{r}
+plot(m13$fitted.values,m13$residuals)
+plot(m21$fitted.values,m21$residuals)
+plot(m33$fitted.values,m33$residuals)
+plot(m42$fitted.values,m42$residuals)
+plot(m52$fitted.values,m52$residuals)
+
+# check for normality of residuals
+qqnorm(m13$residuals)
+qqline(m13$residuals, col="red")
+
+qqnorm(m21$residuals)
+qqline(m21$residuals, col="red")
+
+qqnorm(m33$residuals)
+qqline(m33$residuals,col="red")
+
+qqnorm(m42$residuals)
+qqline(m42$residuals, col="red")
+
+qqnorm(m52$residuals)
+qqline(m52$residuals, col="red")
+```
+
+
+## Assumption Check
+
+```{r}
+# model for grades and borough and female
+
+m5.1 <- lm(scalescore17~poly(scalescore13,3) + female + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 + grade_8, data=dclean)
+summary(m5.1)
+```
+
+
+MLR 1: Linearity
+
+```{r}
+# set mtest to desired model
+mtest = m5.1
+
+summary(mtest)
+
+# check for linearity in betas
+plot(mtest$fitted.values,mtest$residuals, main="Residuals vs Fitted for Math Test Model")
+plot(mtest)
+```
+
+MLR 2: Random Sampling & Outliers
+hat values show no points are exerting leverage
+
+```{r}
+#check for outliers
+qqPlot(mtest, simulate=T, labels=row.names(dclean)) 
+outlierTest(mtest)
+
+dclean1 = dclean[-219,]  # remove outlier from outlierTest
+
+# plot leverage 
+lev = hat(model.matrix(mtest))
+plot(lev, pch=19, main="After Removed Leverage Points")
+abline(6*mean(lev),0,col="red",lwd=3)
+
+pts <-subset(lev,lev>3*mean(lev))
+rpts = unique(match(pts,lev))
+
+# length of rpts which is row num of leverage points
+x=66
+
+i=0
+for (i in 0:65)
+{
+  x=x-i
+  dclean1 = dclean1[-rpts[x],]
+  x=66
+}
+
+#re-run model with outliers and leverage points removed
+m5.2 <- lm(scalescore17~poly(scalescore13,3) + female + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 +
+           grade_8, data=dclean1)
+
+mtest = m5.2
+```
+
+MLR 3: Zero Conditional Mean - Endogineity
+
+```{r}
+# Zero cond. mean
+# based on this we reject the null hypothesis say that we have some functional form misspecifications in the model.
+resettest(mtest)
+```
+
+
+MLR 4: No Perfect Multicolinearity
+
+```{r}
+#No perfect multicolinearity
+
+df = dplyr::select_if(dclean,is.numeric)
+x = 19
+
+cormat = rcorr(as.matrix(df))     # df is dataframe with all numbers
+lower = cormat$P
+upper = cormat$r
+
+upper = as.data.frame(upper)
+upper = round(upper,2)
+lower = as.data.frame(lower)
+lower = round(lower,2)
+
+cormatout = upper
+x = ncol(df)
+for (i in 1:x){ #column         # x is the number of variables in df
+  for (j in 1+i:x){ #row
+    cormatout[j,i]=lower[j,i]
+  }
+}
+cormat = cormatout[-j,]      # usually have to remove 1 or more empty rows
+rm(lower,upper,df,cormatout)
+stargazer(cormat,type="text", summary=FALSE, align=TRUE, digits=2, 
+          title="Correlation Values over p-values for Math Scores")
+
+vif(mtest)
+```
+
+MLR 5: No Heteroskedasticity
+
+```{r}
+# test for heteroskedasticity
+bartlett.test(list(mtest$residuals,mtest$fitted.values))
+leveneTest(mtest$residuals, mtest$fitted.values, center=mean)
+```
+
+MLR 6: Normality of Residuals
+```{r}
+# Normality
+qqnorm(mtest$residuals)
+qqline(mtest$residuals, col="red")
+```
+
+```{r}
+# use robust SE for model
+# using hetero robust standard errors
+coeftest(mtest,vcov=vcovHC(mtest))      # I think we should use this one.
+
+# another way of running regression on robust SE for Heteroskedasticity
+
+m5.3 <- lmrob(scalescore17~poly(scalescore13,3) + female + bronx + brook + man + queen + grade_4 + grade_5 + grade_6 + grade_7 + grade_8, data=dclean1)
+
+
+S(m5.3)
+summary(m5.3)
+
+plot(m5.3)
+
+
+qqnorm(m5.3$residuals)
+qqline(m5.3$residuals, col="red")
+
+```
+
+#### Graphs
+
+ Boroughs are made up of the following districts 1-6 are Manhattan, 7-12 are Bronx, 13-23 & 32 are Brooklyn, 2
+ 4-30 are Queens, and 31 is Statten Island
+```{r}
+for(i in 1:nrow(dclean)){
+  if(dclean$district[i]<7){
+    dclean$borough[i]='Manhattan'
+  }else if (dclean$district[i] > 6 & dclean$district[i] <= 12 )
+  {
+    dclean$borough[i] = 'Bronx'
+  }else if (dclean$district[i] > 12 & dclean$district[i] < 24)
+  {
+    dclean$borough[i] = 'Brooklyn'
+  }else if (dclean$district[i] > 23 & dclean$district[i] < 31)
+  {
+    dclean$borough[i] = 'Queens'
+  }else if (dclean$district[i] == 31)
+  {
+    dclean$borough[i] = 'Staten Island'
+  }else if (dclean$district[i] == 32)
+  {
+    dclean$borough[i] = 'Brooklyn'
+  }
+}
+
+unique(dclean$borough)
+```
+
+Data visualization:
+```{r}
+library(lattice)
+
+
+ggplot(dclean, aes(x=scalescore13, y=scalescore17, color = borough),size=1) +
+    geom_point(shape=1) +    # Use hollow circles
+    geom_smooth(method=lm) + facet_grid(.~borough)+ ggtitle("Math Score by Boroughs in NYC")
+  
+```
+
+```{r}
+library(reshape2)
+nine.new <- melt(dclean,id.vars='borough', measure.vars=c('scalescore13','scalescore17'))
+
+nine.new <- nine.new[complete.cases(nine.new), ]
+ 
+ggplot(data=nine.new,
+       aes(x=borough, y=value, colour=variable)) +
+       geom_line(size = 2)
+
+```
